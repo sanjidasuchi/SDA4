@@ -1,0 +1,21 @@
+name: salzburg_museum_optimizer_env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.8 # Targeting Python 3.8+ as per your project requirements
+  - osmnx=1.6.0 # Specific version as requested in your project description
+  - folium
+  - ortools
+  - geopy
+  - networkx
+  - geopandas # Essential dependency for osmnx, good to explicitly include
+  - numpy     # Common data science dependency, often pulled by others
+  - pandas    # Common data science dependency, often pulled by others
+  - rtree     # Spatial indexing, improves performance for geospatial queries
+  - shapely   # Core geometry library, dependency of geopandas
+  - fiona     # Handles reading/writing spatial data formats, dependency of geopandas
+  - pyproj    # Projections and coordinate transformations, dependency of geopandas
+  - matplotlib # For basic plotting, often useful even if not directly plotted
+  - jupyter   # For running the .ipynb notebook
+  - ipykernel # To ensure the kernel is available in Jupyter
