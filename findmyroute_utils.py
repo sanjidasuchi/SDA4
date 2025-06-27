@@ -1,15 +1,24 @@
-# findmyroute_utils.py
+# @title FindMyRoute: Optimised Tourist Path Discovery - Google Colab Main Code
 
-"""
-This module provides utility functions for the FindMyRoute project,
-focusing on geospatial data acquisition, basic routing, and visualization
-using osmnx, networkx, and folium.
-"""
+# --- Section 1: Verify Imports and Define Core Utility Functions ---
+# This section attempts imports and defines all the functions.
 
-import osmnx as ox
-import networkx as nx
-import folium
+print("\n--- Section 1: Verifying Imports and Defining Core Utility Functions ---")
 
+# Verify imports after restart
+try:
+    import osmnx as ox 
+    import networkx as nx
+    import folium
+    import math # For the improved lon_buffer_deg calculation
+    print("All core libraries (osmnx, networkx, folium, math) imported successfully.")
+except ImportError as e:
+    print(f"ERROR: Failed to import a required library: {e}")
+    print("Please ensure you ran the installation cell (Section 0) and restarted the runtime.")
+    # Exit here if imports fail, as subsequent code won't work
+    raise
+
+# ... (the rest of your functions remain the same) ...
 def load_city_graph(place_name: str) -> nx.MultiDiGraph:
     """
     Loads a city's road network graph from OpenStreetMap using osmnx.
@@ -21,6 +30,7 @@ def load_city_graph(place_name: str) -> nx.MultiDiGraph:
         networkx.MultiDiGraph: A MultiDiGraph object representing the road network.
                                Returns None if the graph cannot be loaded.
     """
+    print(f"\nAttempting to load graph for: {place_name}")
     try:
         # Retrieve the street network graph
         graph = ox.graph_from_place(place_name, network_type="drive")
@@ -28,6 +38,7 @@ def load_city_graph(place_name: str) -> nx.MultiDiGraph:
         return graph
     except Exception as e:
         print(f"Error loading graph for {place_name}: {e}")
+        print("Possible issues: Incorrect place name, no internet, or OSMnx server issues.")
         return None
 
 def find_nearest_node(graph: nx.MultiDiGraph, latitude: float, longitude: float) -> int:
@@ -43,10 +54,11 @@ def find_nearest_node(graph: nx.MultiDiGraph, latitude: float, longitude: float)
         int: The ID of the nearest node in the graph. Returns None if the graph is invalid.
     """
     if graph is None:
-        print("Error: Graph is not loaded.")
+        print("Error: Graph is not loaded. Cannot find nearest node.")
         return None
     try:
         # Find the nearest node to the given coordinates
+        # osmnx.distance.nearest_nodes expects (longitude, latitude)
         node = ox.distance.nearest_nodes(graph, longitude, latitude)
         print(f"Found nearest node {node} for coordinates ({latitude}, {longitude})")
         return node
@@ -71,7 +83,7 @@ def calculate_shortest_path_length(graph: nx.MultiDiGraph, origin_coords: tuple,
                Returns float('inf') if no path exists or an error occurs.
     """
     if graph is None:
-        print("Error: Graph is not loaded.")
+        print("Error: Graph is not loaded. Cannot calculate path.")
         return float('inf')
 
     # Convert coordinates to graph nodes
@@ -82,19 +94,26 @@ def calculate_shortest_path_length(graph: nx.MultiDiGraph, origin_coords: tuple,
         print("Could not find nearest nodes for path calculation.")
         return float('inf')
 
+    print(f"\nCalculating shortest path from {origin_node} to {destination_node} (weight: {weight})...")
     try:
-        # Calculate the shortest path length
         # For travel time, ensure 'travel_time' attribute exists or calculate it
-        if weight == 'travel_time' and 'travel_time' not in graph.edges(data=True).__next__()[2]:
-            graph = ox.speed.add_edge_speeds(graph)
-            graph = ox.speed.add_travel_times(graph)
+        if weight == 'travel_time':
+            # Check if travel_time exists on at least one edge. If not, add it.
+            # Avoids recalculating if already present.
+            if not any('travel_time' in data for u, v, k, data in graph.edges(data=True, keys=True)):
+                print("Adding edge speeds and travel times to graph...")
+                graph = ox.speed.add_edge_speeds(graph)
+                graph = ox.speed.add_travel_times(graph)
+            else:
+                print("Travel times already present on graph edges.")
 
         # Use Dijkstra's algorithm to find the shortest path
         path_length = nx.shortest_path_length(graph, source=origin_node, target=destination_node, weight=weight)
-        print(f"Shortest path length ({weight}) from {origin_node} to {destination_node}: {path_length:.2f}")
+        unit = "meters" if weight == 'length' else "seconds"
+        print(f"Shortest path length ({weight}) from {origin_node} to {destination_node}: {path_length:.2f} {unit}")
         return path_length
     except nx.NetworkXNoPath:
-        print(f"No path found between {origin_node} and {destination_node}.")
+        print(f"No path found between {origin_node} and {destination_node} using '{weight}' weight.")
         return float('inf')
     except Exception as e:
         print(f"Error calculating shortest path: {e}")
@@ -120,58 +139,67 @@ def visualize_route_on_map(graph: nx.MultiDiGraph, route_nodes: list, attraction
         return None
 
     # Get the geographic centroid of the route for map centering
+    center_lat, center_lon = 47.8095, 13.0550 # Default Salzburg coordinates (current location)
+
     if route_nodes:
-        # Get coordinates for the route nodes
+        # Calculate approximate center from route nodes
         route_coords = [(graph.nodes[node]['y'], graph.nodes[node]['x']) for node in route_nodes]
-        # Calculate approximate center
-        center_lat = sum(coord[0] for coord in route_coords) / len(route_coords)
-        center_lon = sum(coord[1] for coord in route_coords) / len(route_coords)
+        if route_coords: # Ensure route_coords is not empty
+            center_lat = sum(coord[0] for coord in route_coords) / len(route_coords)
+            center_lon = sum(coord[1] for coord in route_coords) / len(route_coords)
     elif start_point:
         center_lat, center_lon = start_point
-    else:
-        # Fallback to a default center (e.g., Salzburg) if no route or start point is given
-        center_lat, center_lon = 47.8095, 13.0550 # Salzburg coordinates
 
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=14)
 
     # Add the optimized route to the map
     if route_nodes:
-        # Extract geometry of the route if available, otherwise draw line segments
+        print("Plotting route on map...")
         try:
-            # osmnx can plot the route directly
+            # osmnx.plot_route_folium is the easiest way to plot a route
             route_map = ox.plot_route_folium(graph, route_nodes, route_map=m, tiles="OpenStreetMap",
                                              color="#cc0000", weight=5, opacity=0.7)
             m = route_map
         except Exception as e:
-            print(f"Could not plot route directly with osmnx, plotting segments: {e}")
-            # Fallback: plot individual edges of the route
+            print(f"Warning: Could not plot route directly with osmnx ({e}). Attempting to plot segments.")
+            # Fallback: plot individual edges of the route if direct plotting fails
             for i in range(len(route_nodes) - 1):
-                start_node = route_nodes[i]
-                end_node = route_nodes[i+1]
-                try:
-                    # Get the edge between the two nodes
-                    # Need to handle potential multiple edges between nodes (MultiDiGraph)
-                    # For simplicity, we'll take the first edge found
-                    edge_data = graph.get_edge_data(start_node, end_node)
-                    if edge_data:
-                        # Assumes 'geometry' is present for complex paths or draws a straight line
-                        if 'geometry' in edge_data[0]: # For MultiDiGraph, edge_data is a dict of dicts
+                u = route_nodes[i]
+                v = route_nodes[i+1]
+
+                # Ensure nodes exist in the graph before trying to access their data
+                if u not in graph.nodes or v not in graph.nodes:
+                    print(f"Skipping segment from node {u} to {v} as one or both nodes not found in graph.")
+                    continue
+
+                # Get edge data (handling MultiDiGraph with multiple edges between u and v)
+                edge_geometries = []
+                if graph.has_edge(u, v):
+                    for k, data in graph.get_edge_data(u, v).items():
+                        if 'geometry' in data and data['geometry'] is not None:
+                            edge_geometries.append(data['geometry'])
+
+                if edge_geometries:
+                    # Plot all geometries found for the segment
+                    for geom in edge_geometries:
+                        try:
+                            # Shapely LineString.coords gives (x, y) which is (lon, lat)
                             folium.PolyLine(
-                                locations=[(lat, lon) for lon, lat in edge_data[0]['geometry'].coords],
+                                locations=[(lat, lon) for lon, lat in geom.coords],
                                 color="blue", weight=5, opacity=0.7
                             ).add_to(m)
-                        else:
-                             # Fallback to straight line if no geometry
-                            start_lat, start_lon = graph.nodes[start_node]['y'], graph.nodes[start_node]['x']
-                            end_lat, end_lon = graph.nodes[end_node]['y'], graph.nodes[end_node]['x']
-                            folium.PolyLine([(start_lat, start_lon), (end_lat, end_lon)],
-                                            color="blue", weight=5, opacity=0.7).add_to(m)
-                except Exception as ex:
-                    print(f"Error plotting segment between {start_node} and {end_node}: {ex}")
-
+                        except Exception as poly_e:
+                            print(f"Error plotting PolyLine for segment geometry between {u} and {v}: {poly_e}")
+                else:
+                    # Fallback to straight line if no geometry or no direct edge found
+                    start_lat, start_lon = graph.nodes[u]['y'], graph.nodes[u]['x']
+                    end_lat, end_lon = graph.nodes[v]['y'], graph.nodes[v]['x']
+                    folium.PolyLine([(start_lat, start_lon), (end_lat, end_lon)],
+                                    color="blue", weight=5, opacity=0.7).add_to(m)
 
     # Add attractions markers
     if attractions:
+        print("Adding attraction markers...")
         for name, coords in attractions.items():
             folium.Marker(
                 location=coords,
@@ -181,6 +209,7 @@ def visualize_route_on_map(graph: nx.MultiDiGraph, route_nodes: list, attraction
 
     # Add POI markers
     if pois:
+        print("Adding POI markers...")
         for name, coords in pois.items():
             folium.CircleMarker(
                 location=coords,
@@ -194,22 +223,23 @@ def visualize_route_on_map(graph: nx.MultiDiGraph, route_nodes: list, attraction
 
     # Add start and end points
     if start_point:
+        print("Adding start point marker...")
         folium.Marker(
             location=start_point,
             popup="<b>Start Point</b>",
             icon=folium.Icon(color="red", icon="play")
         ).add_to(m)
     if end_point:
+        print("Adding end point marker...")
         folium.Marker(
             location=end_point,
             popup="<b>End Point</b>",
             icon=folium.Icon(color="purple", icon="stop")
         ).add_to(m)
-    
-    print("Map created successfully with route and markers.")
+
+    print("Map creation process completed.")
     return m
 
-# Example for POI filtering - simplified for A4
 def find_pois_near_route(graph: nx.MultiDiGraph, route_nodes: list, tags: dict, buffer_meters: int = 500) -> dict:
     """
     A simplified function to find Points of Interest (POIs) near a given route.
@@ -224,53 +254,197 @@ def find_pois_near_route(graph: nx.MultiDiGraph, route_nodes: list, tags: dict, 
     Returns:
         dict: A dictionary of identified POIs {name: (lat, lon)}.
     """
-    if not route_nodes:
+    if not route_nodes or graph is None:
+        print("Cannot find POIs: no route nodes or graph is not loaded.")
         return {}
 
     # Get the bounding box of the route
     min_lat, max_lat = float('inf'), float('-inf')
     min_lon, max_lon = float('inf'), float('-inf')
-    
+
+    # Calculate bounding box from route nodes
     for node_id in route_nodes:
-        node = graph.nodes[node_id]
-        lat, lon = node['y'], node['x']
-        min_lat = min(min_lat, lat)
-        max_lat = max(max_lat, lat)
-        min_lon = min(min_lon, lon)
-        max_lon = max(max_lon, lon)
-    
-    # Expand the bounding box by a buffer (this is a rough approximation, not precise buffering)
-    # A more precise method would involve projecting to a local UTM zone, buffering, then reprojecting.
-    # For A4, we'll just expand the lat/lon bounds slightly.
-    # Rough degree approximation for buffer_meters
+        if node_id in graph.nodes:
+            node = graph.nodes[node_id]
+            lat, lon = node['y'], node['x']
+            min_lat = min(min_lat, lat)
+            max_lat = max(max_lat, lat)
+            min_lon = min(min_lon, lon)
+            max_lon = max(max_lon, lon)
+        else:
+            print(f"Warning: Node {node_id} not found in graph for bounding box calculation. Skipping.")
+
+
+    # Expand the bounding box by a buffer (rough approximation for A4)
+    # This calculation uses a more robust approach for longitude buffer
     lat_buffer_deg = buffer_meters / 111139.0 # approx meters per degree latitude
-    lon_buffer_deg = buffer_meters / (111139.0 * abs(max_lat if abs(max_lat) > abs(min_lat) else min_lat)) # meters per degree longitude varies with latitude
-    if lon_buffer_deg > 1: # Avoid division by zero or huge buffer near equator
-         lon_buffer_deg = buffer_meters / 111139.0 # Use a default if too close to poles or small area
+
+    # Calculate average latitude for more accurate longitude degree conversion
+    avg_lat_rad = (min_lat + max_lat) / 2 * (math.pi / 180.0) # Convert to radians
+    # Handle cases where cos(avg_lat_rad) might be zero or near zero (e.g., at poles)
+    if abs(math.cos(avg_lat_rad)) < 1e-6: # If close to pole (or equator if lat is 0), use a reasonable default
+        lon_buffer_deg = buffer_meters / 111139.0
+    else:
+        lon_buffer_deg = buffer_meters / (111139.0 * math.cos(avg_lat_rad))
 
     north = max_lat + lat_buffer_deg
     south = min_lat - lat_buffer_deg
     east = max_lon + lon_buffer_deg
     west = min_lon - lon_buffer_deg
 
-    print(f"Searching for POIs within bounding box: ({south}, {west}, {north}, {east})")
+    print(f"\nSearching for POIs within approximate bounding box: ({south:.4f}, {west:.4f}, {north:.4f}, {east:.4f}) with tags {tags}...")
 
     pois = {}
     try:
-        # Use osmnx to get amenities within the expanded bounding box
-        # This will be a more sophisticated spatial query in the final project
+        # Use osmnx to get features (POIs) within the expanded bounding box
         gdf_pois = ox.features.features_from_bbox(north, south, east, west, tags)
-        
+
         # Filter for unique POIs and extract name and coordinates
-        for _, row in gdf_pois.iterrows():
-            if 'name' in row and row['name'] and not row['name'].startswith('way/'): # Avoid unnamed ways
-                # Check for point geometry (preferred) or polygon centroid
-                if row.geometry.geom_type == 'Point':
-                    pois[row['name']] = (row.geometry.y, row.geometry.x)
-                elif row.geometry.geom_type in ['Polygon', 'MultiPolygon'] and row.geometry.centroid:
-                     pois[row['name']] = (row.geometry.centroid.y, row.geometry.centroid.x)
-        print(f"Found {len(pois)} POIs of type {tags} near the route.")
+        if not gdf_pois.empty:
+            gdf_pois = gdf_pois.drop_duplicates(subset=['geometry']) # Avoid duplicate entries for same location
+
+            for _, row in gdf_pois.iterrows():
+                # Only consider features with a name and not internal OSM ways
+                # Check for `name` existence and if it's not empty/whitespace and not an internal OSM way ID
+                if 'name' in row and isinstance(row['name'], str) and row['name'].strip() and not row['name'].startswith('way/'):
+                    # Prioritize point geometry, otherwise use centroid for polygons
+                    if row.geometry.geom_type == 'Point':
+                        pois[row['name']] = (row.geometry.y, row.geometry.x)
+                    elif row.geometry.geom_type in ['Polygon', 'MultiPolygon'] and row.geometry.centroid:
+                         pois[row['name']] = (row.geometry.centroid.y, row.geometry.centroid.x)
+            print(f"Found {len(pois)} unique POIs near the route.")
+        else:
+            print("No features found in the bounding box for the specified tags.")
+
     except Exception as e:
         print(f"Error fetching POIs: {e}")
-    
+        # Specific check if no features were found (common osmnx error)
+        if "No features match" in str(e) or "empty GeoDataFrame" in str(e):
+             print("This might mean no POIs matching your tags exist in the queried area.")
     return pois
+
+print("All utility functions are now defined and ready.")
+print("--- End of Section 1 ---")
+
+
+# --- Section 2: Main Demonstration Logic ---
+# This section executes the functions to demonstrate the project's capabilities.
+
+print("\n--- Section 2: Running Main Demonstration Logic ---")
+
+## 2.1. Load City Road Network Graph
+
+# Define the city for which to load the road network (current location)
+city_name = "Salzburg, Austria"
+print(f"Attempting to load road network for {city_name} (this may take a few moments)...")
+G = load_city_graph(city_name)
+
+if G is None:
+    print("Graph loading failed. Aborting demonstration.")
+    
+
+## 2.2. Define Tourist Attractions and Points of Interest (POIs)
+
+# Define some key attractions in Salzburg (Name: (Latitude, Longitude))
+salzburg_attractions = {
+    "Hohensalzburg Fortress": (47.7946, 13.0470),
+    "Mozart's Birthplace": (47.8009, 13.0460),
+    "Mirabell Palace": (47.8070, 13.0430),
+    "Salzburg Cathedral": (47.7997, 13.0477),
+    "Getreidegasse": (47.8000, 13.0450)
+}
+
+# Define a start and end point for a hypothetical route
+# Using Getreidegasse as start and Mirabell Palace as end
+start_coords = salzburg_attractions["Getreidegasse"]
+end_coords = salzburg_attractions["Mirabell Palace"]
+
+# Define OSM tags for POIs we are interested in (e.g., cafes, parks)
+poi_tags = {
+    'amenity': ['cafe', 'restaurant', 'pub', 'bench'],
+    'leisure': ['park', 'garden', 'playground'],
+    'shop': ['bakery', 'convenience']
+}
+
+print("\nAttractions and POI tags defined for demonstration.")
+
+## 2.3. Calculate Shortest Path Between Two Points
+
+print("\n--- Calculating shortest paths between selected attractions ---")
+
+# Example: Calculate shortest distance between Hohensalzburg Fortress and Mirabell Palace
+fortress_coords = salzburg_attractions["Hohensalzburg Fortress"]
+mirabell_coords = salzburg_attractions["Mirabell Palace"]
+
+# Calculate path based on physical length (meters)
+distance_meters = calculate_shortest_path_length(G, fortress_coords, mirabell_coords, weight='length')
+print(f"Distance between Fortress and Mirabell Palace: {distance_meters:.2f} meters")
+
+# Calculate path based on estimated travel time (seconds)
+travel_time_seconds = calculate_shortest_path_length(G, fortress_coords, mirabell_coords, weight='travel_time')
+# Convert seconds to minutes for better readability
+if travel_time_seconds != float('inf'):
+    travel_time_minutes = travel_time_seconds / 60
+    print(f"Estimated travel time between Fortress and Mirabell Palace: {travel_time_seconds:.2f} seconds ({travel_time_minutes:.2f} minutes)")
+else:
+    print("Could not calculate estimated travel time.")
+
+
+## 2.4. Simplified Route Generation & POI Discovery (A4 Placeholder)
+
+print("\n--- Generating a placeholder route and discovering nearby POIs ---")
+
+# For A4, we simulate an 'optimized route' by finding a direct shortest path
+# between our defined start and end coordinates.
+start_node = find_nearest_node(G, start_coords[0], start_coords[1])
+end_node = find_nearest_node(G, end_coords[0], end_coords[1])
+
+route_nodes_for_viz = []
+if start_node and end_node:
+    try:
+        # Use 'travel_time' for path finding to align with optimization goals
+        # Ensure 'travel_time' attributes are on edges before trying to pathfind by it
+        if not any('travel_time' in data for u, v, k, data in G.edges(data=True, keys=True)):
+            print("Adding edge speeds and travel times for route generation...")
+            G = ox.speed.add_edge_speeds(G)
+            G = ox.speed.add_travel_times(G)
+        route_nodes_for_viz = nx.shortest_path(G, source=start_node, target=end_node, weight='travel_time')
+        print(f"Generated a direct path between start and end points with {len(route_nodes_for_viz)} nodes.")
+    except nx.NetworkXNoPath:
+        print("No direct path found between start and end points for visualization (check connectivity).")
+    except Exception as e:
+        print(f"Error generating route for visualization: {e}")
+else:
+    print("Start or end node not found. Cannot generate route.")
+
+# Discover POIs near this simplified route
+# Using a buffer of 500 meters around the route for POI search
+discovered_pois = {}
+if route_nodes_for_viz:
+    print(f"\nSearching for POIs around the generated route with a {500}m buffer...")
+    discovered_pois = find_pois_near_route(G, route_nodes_for_viz, tags=poi_tags, buffer_meters=500)
+    print(f"Total discovered POIs: {len(discovered_pois)}")
+else:
+    print("No route available to find POIs near.")
+
+
+## 2.5. Visualize the Route and POIs on an Interactive Map
+
+print("\n--- Creating interactive map visualization ---")
+
+# Create the interactive map
+tour_map = visualize_route_on_map(
+    graph=G,
+    route_nodes=route_nodes_for_viz,
+    attractions=salzburg_attractions,
+    pois=discovered_pois,
+    start_point=start_coords,
+    end_point=end_coords
+)
+
+# Display the map. In Google Colab, this will render the interactive map below the cell.
+print("\nDisplaying the interactive map. Scroll down to view the map output.")
+tour_map
+
+print("\n--- End of Section 2 ---")
+print("\nFindMyRoute Demonstration Complete!")
